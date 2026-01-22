@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 module uart_tx #(
     parameter DATA_WIDTH = 8
 )(
@@ -34,7 +35,7 @@ module uart_tx #(
                     shift_reg <= {1'b1, ^tx_data, tx_data, 1'b0};
                     bit_cnt <= 11;
                     // Send Start Bit
-                    timer <= (prescale * 8) - 1; 
+                    timer <= (prescale - 1);
                 end
             end else begin
                 if (timer > 0) begin
@@ -44,7 +45,7 @@ module uart_tx #(
                         txd <= shift_reg[0];
                         shift_reg <= {1'b1, shift_reg[10:1]};
                         bit_cnt <= bit_cnt - 1;
-                        timer <= (prescale_latched * 8) - 1;
+                        timer <= prescale_latched - 1;
                     end else begin
                         busy <= 0;
                     end

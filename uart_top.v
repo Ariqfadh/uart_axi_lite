@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 module uart_top #(
     parameter DATA_WIDTH = 8,
     parameter DEFAULT_PRESCALE = 16'd434 

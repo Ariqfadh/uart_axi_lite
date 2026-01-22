@@ -1,5 +1,5 @@
 `timescale 1ns / 1ps
-
+`default_nettype none
 module uart_multi_baud_tb();
     reg clk;
     reg rst;
@@ -8,8 +8,10 @@ module uart_multi_baud_tb();
     reg [7:0] tx_data;
     reg tx_start;
     reg [15:0] current_baud_div;
-    wire tx_busy, uart_line, rx_done;
+    wire tx_busy, rx_ready, rx_busy;
     wire [7:0] rx_data;
+    wire uart_line;
+    reg [31:0] BaudRate;
     
     // Clock 100 MHz
     always #5 clk = ~clk;
@@ -32,41 +34,45 @@ module uart_multi_baud_tb();
     task send_and_check(input [7:0] data, input [15:0] div_val);
         begin
             current_baud_div = div_val;
+            BaudRate = 100_000_000 / (current_baud_div);
             tx_data = data;
             #100;
             tx_start = 1;
             #10 tx_start = 0;
             
-            wait(rx_done);
+            wait(rx_ready);
             if (rx_data == data)
-                $display("[SUCCESS] BaudDiv: %0d | Sent: %h | Received: %h", div_val, data, rx_data);
+                $display("[SUCCESS] BaudDiv: %0d | BaudRate : %0d | Sent: %h | Received: %h", div_val,BaudRate, data, rx_data);
             else
-                $display("[FAILED]  BaudDiv: %0d | Sent: %h | Received: %h", div_val, data, rx_data);
-            #5000; // Jeda antar transfer
+                $display("[FAILED]  BaudDiv: %0d | BaudRate : %0d | Sent: %h | Received: %h", div_val, BaudRate, data, rx_data);
+            #50000; 
         end
     endtask
 
-    initial begin
-        clk = 0;
-        rst = 1;
-        tx_start = 0;
-        current_baud_div = 868; // Default 115200
-        
-        #20 rst = 0;
-        #100;
+        initial begin
+            clk = 0;
+            rst = 1;
+            tx_start = 0;
+            current_baud_div = 868; // Default 115200
+            $dumpfile("uart_vcd.vcd");
+            $dumpvars(0, uart_multi_baud_tb);
+            $monitor("Time: %0t | TX Start: %b | TX Busy: %b | TX Data: %h | RX Busy: %b | RX Ready: %b | RX Data: %h", 
+                        $time, tx_start, tx_busy, tx_data,rx_busy, rx_ready, rx_data);
+            #20 rst = 0;
+            #100;
 
-        $display("--- Starting Multi-Baud Rate Test ---");
+            $display("--- Starting Multi-Baud Rate Test ---");
 
-        // Test 1: 115200 Baud (Div = 868 @ 100MHz)
-        send_and_check(8'hA5, 868);
+            // Test 1: 115200 Baud (Div = 868 @ 100MHz)
+            send_and_check(8'hA5, 868);
 
-        // Test 2: 9600 Baud (Div = 10416 @ 100MHz)
-        send_and_check(8'h3C, 10416);
+            // Test 2: 9600 Baud (Div = 10416 @ 100MHz)
+            send_and_check(8'h3C, 10416);
 
-        // Test 3: Custom High Speed (misal 1 Mbaud, Div = 100)
-        send_and_check(8'hFF, 100);
+            // Test 3: Custom High Speed (misal 1 Mbaud, Div = 100)
+            // send_and_check(8'hFF, 100);
 
-        $display("--- All Tests Completed ---");
-        #1000 $finish;
-    end
-endmodule
+            $display("--- All Tests Completed ---");
+            #1000 $finish;
+        end
+    endmodule

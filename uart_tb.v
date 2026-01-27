@@ -1,139 +1,165 @@
 `timescale 1ns/1ps
 
-module uart_tb;
+module uart_top_tb;
 
-    // --- Signals ---
-    reg clk;
-    reg rst;
-    reg rxd;
-    reg rx_ack;
-    reg [15:0] prescale;
+    // --- Parameter Simulasi (100 MHz) ---
+    parameter DATA_WIDTH = 8;
+    parameter CLK_PERIOD = 10; 
 
-    wire [7:0] rx_data;
+    parameter BAUD_115200 = 16'd868;
+    parameter BAUD_9600   = 16'd10417;
+
+    // --- Sinyal ---
+    reg  clk, rst;
+    reg  [DATA_WIDTH-1:0] tx_data;
+    reg  tx_start;
+    wire tx_busy;
+    wire [DATA_WIDTH-1:0] rx_data;
     wire rx_ready;
-    wire busy;
-    wire overrun_error;
-    wire framing_error;
+    reg  rx_ack;
+    wire rx_busy, rx_overrun_error, rx_framing_error;
+    wire txd_out;
+    reg  rxd_in;
+    reg  [15:0] prescale;
 
-    // --- Device Under Test (DUT) ---
-    uart_rx dut (
-        .clk     (clk),
-        .rst     (rst),
-        .rxd     (rxd),
-        .prescale(prescale),
-        .rx_data (rx_data),
-        .rx_ready(rx_ready),
-        .rx_ack  (rx_ack),
-        .busy    (busy),
-        .overrun_error(overrun_error),
-        .framing_error(framing_error)
+    // Statistik
+    integer errors = 0;
+    integer tests  = 0;
+
+    // --- Jalur Loopback ---
+    wire uart_line;
+    reg  loopback_en;
+    assign uart_line = loopback_en ? txd_out : rxd_in;
+
+    // --- Instansiasi DUT ---
+    uart_top #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .DEFAULT_PRESCALE(BAUD_115200)
+    ) dut (
+        .clk(clk), .rst(rst),
+        .tx_data(tx_data), .tx_start(tx_start), .tx_busy(tx_busy),
+        .rx_data(rx_data), .rx_ready(rx_ready), .rx_ack(rx_ack),
+        .rx_busy(rx_busy), .rx_overrun_error(rx_overrun_error), .rx_framing_error(rx_framing_error),
+        .rxd(uart_line), .txd(txd_out), .prescale(prescale)
     );
 
-    // --- Clock Generator (100 MHz) ---
-    initial clk = 0;
-    always #5 clk = ~clk;
+    // --- Clock Generator ---
+    always #(CLK_PERIOD/2) clk = ~clk;
 
-    // --- Professional UI Task: Send UART Frame ---
-    task uart_send;
-        input [7:0] data;
-        integer i;
-        begin
-            $display("  [TX] Sending: 0x%02x ...", data);
-            rxd = 0; // Start bit
-            repeat (prescale) @(posedge clk);
-
-            for (i = 0; i < 8; i = i + 1) begin
-                rxd = data[i]; // LSB First
-                repeat (prescale) @(posedge clk);
-            end
-
-            rxd = 1; // Stop bit
-            repeat (prescale) @(posedge clk);
-        end
+    // --- Helper Tasks ---
+    
+    task print_header(input [127:0] msg);
+    begin
+        $display("\n-------------------------------------------------------");
+        $display(" %0s", msg);
+        $display("-------------------------------------------------------");
+    end
     endtask
 
-    // --- Professional UI Task: Read & Verify FIFO ---
-    task read_fifo;
-        input [7:0] expected;
-        begin
-            wait(rx_ready);
-            // In FWFT FIFO, data is already stable on the bus
-            if (rx_data === expected)
-                $display("  [RX] Data: 0x%02x | Status: [  OK  ]", rx_data);
-            else
-                $display("  [RX] Data: 0x%02x | Status: [FAILED] (Expected: 0x%02x)", rx_data, expected);
-
-            // Acknowledge pulse
-            @(posedge clk);
-            rx_ack <= 1;
-            @(posedge clk);
-            rx_ack <= 0;
-            @(posedge clk); // Allow FIFO to update count
-        end
-    endtask
-
-    // --- Main Simulation Sequence ---
-    initial begin
-        // Reset Phase
-        rxd = 1; rx_ack = 0; rst = 1; prescale = 0;
-        #100;
+    task send_byte(input [7:0] data);
+    begin
+        wait(!tx_busy);
         @(posedge clk);
-        rst = 0;
-        #50;
+        tx_data = data;
+        tx_start = 1'b1;
+        @(posedge clk);
+        tx_start = 1'b0;
+        wait(tx_busy);
+        wait(!tx_busy);
+        $display("[TIME: %0t] [TX] Sent: 0x%h", $time, data);
+    end
+    endtask
+
+    task check_byte(input [7:0] expected);
+    begin
+        tests = tests + 1;
+        fork : timeout_block
+            begin
+                wait(rx_ready);
+                disable timeout_block;
+            end
+            begin
+                #(CLK_PERIOD * prescale * 15);
+                $display("[TIME: %0t] [RX] [FAIL] Timeout waiting for 0x%h", $time, expected);
+                errors = errors + 1;
+                disable timeout_block;
+            end
+        join
+
+        if (rx_ready) begin
+            if (rx_data === expected)
+                $display("[TIME: %0t] [RX] [PASS] Received: 0x%h", $time, rx_data);
+            else begin
+                $display("[TIME: %0t] [RX] [FAIL] Received: 0x%h (Expected: 0x%h)", $time, rx_data, expected);
+                errors = errors + 1;
+            end
+            @(posedge clk);
+            rx_ack = 1'b1;
+            @(posedge clk);
+            rx_ack = 1'b0;
+        end
+    end
+    endtask
+
+    // --- Main Simulation ---
+    initial begin
+        clk = 0; rst= 1; tx_data = 0; tx_start = 0; rx_ack = 0;
+        rxd_in = 1'b1; prescale = BAUD_115200; loopback_en = 1;
 
         $display("\n=======================================================");
-        $display("   STARTING UART RX CORE FUNCTIONAL VERIFICATION");
+        $display("   UART CORE VERIFICATION DASHBOARD (100 MHz)");
         $display("=======================================================");
 
-        // --- TEST CASE 1: 115200 BAUD BURST ---
-        prescale = 868; // 100MHz / 115200
-        $display("\n[TEST 1] High Speed (115200 Baud) - FIFO Burst Test");
-        $display("-------------------------------------------------------");
+        #(CLK_PERIOD*10); rst = 0; #(CLK_PERIOD*10);
+
+        print_header("TEST 1: BURST TRANSFER (115200 BAUD)");
+        fork
+            begin
+                send_byte(8'hDE); send_byte(8'hAD); 
+                send_byte(8'hBE); send_byte(8'hEF);
+            end
+            begin
+                check_byte(8'hDE); check_byte(8'hAD); 
+                check_byte(8'hBE); check_byte(8'hEF);
+            end
+        join
+
+        print_header("TEST 2: LOW SPEED PRECISION (9600 BAUD)");
+        prescale = BAUD_9600;
+        #(CLK_PERIOD*100);
+        fork
+            send_byte(8'h5A);
+            check_byte(8'h5A);
+        join
+
+        print_header("TEST 3: FIFO OVERRUN PROTECTION");
+        prescale = 16'd100; // Fast baud for testing
+        tests = tests + 1;
         
-        uart_send(8'hDE);
-        uart_send(8'hAD);
-        uart_send(8'hBE);
-        uart_send(8'hEF);
+        send_byte(8'h01); send_byte(8'h02);
+        send_byte(8'h03); send_byte(8'h04);
+        send_byte(8'h05); // Overflow trigger
 
-        $display("\n  Retrieving from FIFO:");
-        read_fifo(8'hDE);
-        read_fifo(8'hAD);
-        read_fifo(8'hBE);
-        read_fifo(8'hEF);
+        #(CLK_PERIOD*50);
+        if (rx_overrun_error)
+            $display("[STATUS] Overrun Flag: [PASS] Detected correctly");
+        else begin
+            $display("[STATUS] Overrun Flag: [FAIL] Not detected");
+            errors = errors + 1;
+        end
 
-        // --- TEST CASE 2: 9600 BAUD ACCURACY ---
-        #2000;
-        prescale = 10417; // 100MHz / 9600
-        $display("\n[TEST 2] Low Speed (9600 Baud) - Precision Test");
-        $display("-------------------------------------------------------");
-        
-        uart_send(8'h5A);
-        read_fifo(8'h5A);
-
-        // --- TEST CASE 3: OVERRUN PROTECTION ---
-        #2000;
-        prescale = 868; 
-        $display("\n[TEST 3] FIFO Buffer Overflow (Overrun) Test");
-        $display("-------------------------------------------------------");
-        
-        $display("  [SYS] Filling FIFO with 5 bytes (Capacity: 4)...");
-        uart_send(8'h01);
-        uart_send(8'h02);
-        uart_send(8'h03);
-        uart_send(8'h04);
-        uart_send(8'h05); // Should trigger overrun
-
-        #100;
-        if (overrun_error) 
-            $display("  [STATUS] Overrun Detected: YES [PASSED]");
-        else               
-            $display("  [STATUS] Overrun Detected: NO  [FAILED]");
-
-        // Clean up
         $display("\n=======================================================");
-        $display("            SIMULATION COMPLETED SUCCESSFULLY");
+        $display("              SIMULATION FINAL REPORT");
         $display("=======================================================");
-        #500;
+        $display(" Total Tests Conducted : %0d", tests);
+        $display(" Total Errors Found     : %0d", errors);
+        if (errors == 0)
+            $display(" Final Status           : [SUCCESS]");
+        else
+            $display(" Final Status           : [FAILED]");
+        $display("=======================================================\n");
+
+        #(CLK_PERIOD*100);
         $finish;
     end
 

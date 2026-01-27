@@ -30,6 +30,9 @@ module uart_top #(
     input  wire [15:0]            prescale
 );
 
+    // ----------------------------------------------------------------
+    // Prescale selection (0 → default)
+    // ----------------------------------------------------------------
     wire [15:0] prescale_internal;
     assign prescale_internal = (prescale != 16'd0) ? prescale : DEFAULT_PRESCALE;
 

@@ -17,21 +17,29 @@ module uart_rx #(
     output reg                    framing_error
 );
 
+    // ------------------------------------------------------------
     // Synchronizer
+    // ------------------------------------------------------------
     reg rxd_ff0, rxd_ff1;
 
-    // FIFO signals
+    // ------------------------------------------------------------
+    // FIFO
+    // ------------------------------------------------------------
     reg  fifo_wr_en;
     wire fifo_full, fifo_empty;
     wire [DATA_WIDTH-1:0] fifo_rd_data;
 
-    // RX core registers
+    // ------------------------------------------------------------
+    // RX core
+    // ------------------------------------------------------------
     reg [DATA_WIDTH-1:0] shifter;
     reg [15:0] timer;
     reg [3:0]  bit_cnt;
     reg [15:0] prescale_latched;
 
-    // FSM States
+    // ------------------------------------------------------------
+    // FSM
+    // ------------------------------------------------------------
     localparam RX_IDLE  = 2'd0;
     localparam RX_START = 2'd1;
     localparam RX_DATA  = 2'd2;
@@ -43,11 +51,13 @@ module uart_rx #(
     assign rx_ready = !fifo_empty;
     assign rx_data  = fifo_rd_data;
 
+    // ------------------------------------------------------------
     // FIFO instance
+    // ------------------------------------------------------------
     rx_fifo #(
         .DATA_WIDTH(DATA_WIDTH),
         .DEPTH(4)
-    ) fifo_inst (
+    ) fifo (
         .clk     (clk),
         .rst     (rst),
         .wr_en   (fifo_wr_en),
@@ -58,30 +68,34 @@ module uart_rx #(
         .empty   (fifo_empty)
     );
 
+    // ------------------------------------------------------------
+    // RX logic
+    // ------------------------------------------------------------
     always @(posedge clk) begin
         if (rst) begin
             rxd_ff0 <= 1'b1;
             rxd_ff1 <= 1'b1;
+
             state   <= RX_IDLE;
             timer   <= 0;
             bit_cnt <= 0;
             shifter <= 0;
-            fifo_wr_en    <= 1'b0;
+
+            fifo_wr_en     <= 1'b0;
             overrun_error  <= 1'b0;
             framing_error  <= 1'b0;
         end else begin
-            // Double FF for Metastability
             rxd_ff0 <= rxd;
             rxd_ff1 <= rxd_ff0;
 
-            fifo_wr_en <= 1'b0; // Default pulse
+            fifo_wr_en <= 1'b0;
 
             case (state)
                 RX_IDLE: begin
                     bit_cnt <= 0;
-                    if (!rxd_ff1) begin // Start bit detected (falling edge)
+                    if (!rxd_ff1) begin
                         prescale_latched <= prescale;
-                        timer <= (prescale >> 1) - 1; // Sample at middle
+                        timer <= (prescale >> 1) - 1;
                         state <= RX_START;
                     end
                 end
@@ -89,7 +103,7 @@ module uart_rx #(
                 RX_START: begin
                     if (timer != 0)
                         timer <= timer - 1;
-                    else if (!rxd_ff1) begin // Re-verify start bit
+                    else if (!rxd_ff1) begin
                         timer <= prescale_latched - 1;
                         state <= RX_DATA;
                     end else
@@ -102,6 +116,7 @@ module uart_rx #(
                     else begin
                         shifter <= {rxd_ff1, shifter[DATA_WIDTH-1:1]};
                         timer   <= prescale_latched - 1;
+
                         if (bit_cnt == DATA_WIDTH-1)
                             state <= RX_STOP;
                         else
@@ -113,18 +128,17 @@ module uart_rx #(
                     if (timer != 0)
                         timer <= timer - 1;
                     else begin
-                        if (rxd_ff1) begin // Valid stop bit (High)
+                        if (rxd_ff1) begin
                             if (!fifo_full)
                                 fifo_wr_en <= 1'b1;
                             else
                                 overrun_error <= 1'b1;
-                        end else begin
+                        end else
                             framing_error <= 1'b1;
-                        end
+
                         state <= RX_IDLE;
                     end
                 end
-                default: state <= RX_IDLE;
             endcase
         end
     end

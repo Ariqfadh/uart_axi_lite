@@ -67,26 +67,29 @@ module tb_uart;
     // ------------------------------------------------------------
     task uart_send_byte;
         input [7:0] data;
-        integer bit_time;
+        input integer prescale;
         integer i;
         begin
-            bit_time = prescale * CLK_PERIOD;
-
+            // align to clk edge
             @(posedge clk);
+
+            // idle before start
+            rxd <= 1'b1;
+            repeat (prescale) @(posedge clk);
 
             // start bit
             rxd <= 1'b0;
-            #(bit_time);
+            repeat (prescale) @(posedge clk);
 
             // data bits (LSB first)
             for (i = 0; i < 8; i = i + 1) begin
                 rxd <= data[i];
-                #(bit_time);
+                repeat (prescale) @(posedge clk);
             end
 
             // stop bit
             rxd <= 1'b1;
-            #(bit_time);
+            repeat (prescale) @(posedge clk);
         end
     endtask
 

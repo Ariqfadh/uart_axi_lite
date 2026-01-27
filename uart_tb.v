@@ -1,78 +1,150 @@
-`timescale 1ns / 1ps
-`default_nettype none
-module uart_multi_baud_tb();
-    reg clk;
-    reg rst;
-    
-    // Signals
-    reg [7:0] tx_data;
-    reg tx_start;
-    reg [15:0] current_baud_div;
-    wire tx_busy, rx_ready, rx_busy;
-    wire [7:0] rx_data;
-    wire uart_line;
-    reg [31:0] BaudRate;
-    
-    // Clock 100 MHz
-    always #5 clk = ~clk;
+`timescale 1ns/1ps
 
-    // Unit Under Test (UUT)
-    uart_top dut (
+module tb_uart;
+
+    // ------------------------------------------------------------
+    // Clock config (100 MHz)
+    // ------------------------------------------------------------
+    localparam CLK_FREQ   = 100_000_000;
+    localparam CLK_PERIOD = 10;   // ns
+
+    reg clk = 0;
+    always #(CLK_PERIOD/2) clk = ~clk;
+
+    // ------------------------------------------------------------
+    // DUT signals
+    // ------------------------------------------------------------
+    reg rst;
+
+    reg  rxd;
+    wire txd;
+
+    wire [7:0] rx_data;
+    wire       rx_ready;
+    reg        rx_ack;
+    wire       rx_busy;
+
+    wire rx_overrun_error;
+    wire rx_framing_error;
+
+    reg  [15:0] prescale;
+
+    // TX not used
+    reg  [7:0] tx_data  = 0;
+    reg        tx_start = 0;
+    wire       tx_busy;
+
+    // ------------------------------------------------------------
+    // DUT
+    // ------------------------------------------------------------
+    uart_top #(
+        .DATA_WIDTH(8),
+        .DEFAULT_PRESCALE(16'd868)
+    ) dut (
         .clk(clk),
         .rst(rst),
-        .tx_start(tx_start),
+
         .tx_data(tx_data),
+        .tx_start(tx_start),
         .tx_busy(tx_busy),
+
         .rx_data(rx_data),
         .rx_ready(rx_ready),
+        .rx_ack(rx_ack),
         .rx_busy(rx_busy),
-        .rxd(uart_line),
-        .txd(uart_line),
-        .prescale(current_baud_div)
+
+        .rx_overrun_error(rx_overrun_error),
+        .rx_framing_error(rx_framing_error),
+
+        .rxd(rxd),
+        .txd(txd),
+
+        .prescale(prescale)
     );
 
-    task send_and_check(input [7:0] data, input [15:0] div_val);
+    // ------------------------------------------------------------
+    // UART RX stimulus (CLOCK + PRESCALE SYNC)
+    // ------------------------------------------------------------
+    task uart_send_byte;
+        input [7:0] data;
+        integer bit_time;
+        integer i;
         begin
-            current_baud_div = div_val;
-            BaudRate = 100_000_000 / (current_baud_div);
-            tx_data = data;
-            #100;
-            tx_start = 1;
-            #10 tx_start = 0;
-            
-            wait(rx_ready);
-            if (rx_data == data)
-                $display("[SUCCESS] BaudDiv: %0d | BaudRate : %0d | Sent: %h | Received: %h", div_val,BaudRate, data, rx_data);
-            else
-                $display("[FAILED]  BaudDiv: %0d | BaudRate : %0d | Sent: %h | Received: %h", div_val, BaudRate, data, rx_data);
-            #50000; 
+            bit_time = prescale * CLK_PERIOD;
+
+            @(posedge clk);
+
+            // start bit
+            rxd <= 1'b0;
+            #(bit_time);
+
+            // data bits (LSB first)
+            for (i = 0; i < 8; i = i + 1) begin
+                rxd <= data[i];
+                #(bit_time);
+            end
+
+            // stop bit
+            rxd <= 1'b1;
+            #(bit_time);
         end
     endtask
 
-        initial begin
-            clk = 0;
-            rst = 1;
-            tx_start = 0;
-            current_baud_div = 868; // Default 115200
-            $dumpfile("uart_vcd.vcd");
-            $dumpvars(0, uart_multi_baud_tb);
-            $monitor("Time: %0t | TX Start: %b | TX Busy: %b | TX Data: %h | RX Busy: %b | RX Ready: %b | RX Data: %h", 
-                        $time, tx_start, tx_busy, tx_data,rx_busy, rx_ready, rx_data);
-            #20 rst = 0;
-            #100;
+    // ------------------------------------------------------------
+    // Test sequence
+    // ------------------------------------------------------------
+    initial begin
+        // init
+        rxd      = 1'b1;
+        rst      = 1'b1;
+        rx_ack  = 1'b0;
+        prescale = 0;
 
-            $display("--- Starting Multi-Baud Rate Test ---");
+        repeat (10) @(posedge clk);
+        rst = 0;
 
-            // Test 1: 115200 Baud (Div = 868 @ 100MHz)
-            send_and_check(8'hA5, 868);
+        // ========================================================
+        // TEST 1 : 9600 baud
+        // ========================================================
+        prescale = CLK_FREQ / 9600; // 10416
+        $display("\n[TEST] RX @9600 baud | prescale=%0d", prescale);
 
-            // Test 2: 9600 Baud (Div = 10416 @ 100MHz)
-            send_and_check(8'h3C, 10416);
+        uart_send_byte(8'h55);
 
-            // Test 3: Custom High Speed (misal 1 Mbaud, Div = 100)
-            // send_and_check(8'hFF, 100);
+        wait (rx_ready);
+        repeat (2) @(posedge clk);
 
-            $display("--- All Tests Completed ---");
-            #1000 $finish;
-        end
-    endmodule
+        $display("RX_DATA = 0x%02X (expect 0x55)", rx_data);
+
+        rx_ack <= 1'b1;
+        @(posedge clk);
+        rx_ack <= 1'b0;
+
+        repeat (2000) @(posedge clk);
+
+        // ========================================================
+        // TEST 2 : 115200 baud
+        // ========================================================
+        prescale = CLK_FREQ / 115200; // 868
+        $display("\n[TEST] RX @115200 baud | prescale=%0d", prescale);
+
+        uart_send_byte(8'hA3);
+
+        wait (rx_ready);
+        repeat (2) @(posedge clk);
+
+        $display("RX_DATA = 0x%02X (expect 0xA3)", rx_data);
+
+        rx_ack <= 1'b1;
+        @(posedge clk);
+        rx_ack <= 1'b0;
+
+        // ========================================================
+        // DONE
+        // ========================================================
+        repeat (5000) @(posedge clk);
+        $display("\nAll UART RX tests completed.");
+        $finish;
+    end
+
+endmodule

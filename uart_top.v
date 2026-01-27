@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
+
 module uart_top #(
     parameter DATA_WIDTH = 8,
-    parameter DEFAULT_PRESCALE = 16'd434 
+    parameter DEFAULT_PRESCALE = 16'd434
 )(
     input  wire                   clk,
     input  wire                   rst,
@@ -14,7 +15,12 @@ module uart_top #(
     // RX Interface
     output wire [DATA_WIDTH-1:0]  rx_data,
     output wire                   rx_ready,
+    input  wire                   rx_ack,
     output wire                   rx_busy,
+    
+    // RX Error flags
+    output wire                   rx_overrun_error,
+    output wire                   rx_framing_error,
     
     // UART Physical Interface
     input  wire                   rxd,
@@ -24,34 +30,34 @@ module uart_top #(
     input  wire [15:0]            prescale
 );
 
-    // Internal prescale with default value
     wire [15:0] prescale_internal;
-    assign prescale_internal = (prescale == 16'd0) ? DEFAULT_PRESCALE : prescale;
+    assign prescale_internal = (prescale != 16'd0) ? prescale : DEFAULT_PRESCALE;
 
-    // Instantiate UART Transmitter
     uart_tx #(
         .DATA_WIDTH(DATA_WIDTH)
     ) u_uart_tx (
-        .clk(clk),
-        .rst(rst),
-        .tx_data(tx_data),
+        .clk      (clk),
+        .rst      (rst),
+        .tx_data (tx_data),
         .tx_start(tx_start),
-        .prescale(prescale_internal),
-        .txd(txd),
-        .busy(tx_busy)
+        .tx_busy (tx_busy),
+        .txd     (txd),
+        .prescale(prescale_internal)
     );
 
-    // Instantiate UART Receiver
     uart_rx #(
         .DATA_WIDTH(DATA_WIDTH)
     ) u_uart_rx (
-        .clk(clk),
-        .rst(rst),
-        .rxd(rxd),
-        .prescale(prescale_internal),
-        .rx_data(rx_data),
-        .rx_ready(rx_ready),
-        .busy(rx_busy)
+        .clk          (clk),
+        .rst          (rst),
+        .rxd          (rxd),
+        .prescale     (prescale_internal),
+        .rx_data      (rx_data),
+        .rx_ready     (rx_ready),
+        .rx_ack       (rx_ack),
+        .busy         (rx_busy),
+        .overrun_error(rx_overrun_error),
+        .framing_error(rx_framing_error)
     );
 
 endmodule

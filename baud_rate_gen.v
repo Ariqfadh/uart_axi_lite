@@ -1,43 +1,21 @@
-`timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Reference Book: FPGA Prototyping By Verilog Examples Xilinx Spartan-3 Version
-// Authored by: Dr. Pong P. Chu
-// Published by: Wiley
-//
-// Adapted for the Basys 3 Artix-7 FPGA by David J. Marion
-//
-// Baud Rate Generator for the UART System
-//
-// Comments:
-// - Many of the variable names have been changed for clarity
-//////////////////////////////////////////////////////////////////////////////////
+module baud_rate_generator (
+    input  wire        clk_100MHz,
+    input  wire        reset,
+    input  wire [15:0] M,      // Input dinamis dari AXI
+    output wire        tick
+);
+    reg  [15:0] r_reg;
+    wire [15:0] r_next;
 
-module baud_rate_generator
-    #(              // 9600 baud
-        parameter   N = 10,     // number of counter bits
-                    M = 651     // counter limit value
-    )
-    (
-        input clk_100MHz,       // basys 3 clock
-        input reset,            // reset
-        output tick             // sample tick
-    );
-    
-    // Counter Register
-    reg [N-1:0] counter;        // counter value
-    wire [N-1:0] next;          // next counter value
-    
-    // Register Logic
-    always @(posedge clk_100MHz, posedge reset)
-        if(reset)
-            counter <= 0;
+    always @(posedge clk_100MHz or posedge reset) begin
+        if (reset)
+            r_reg <= 0;
         else
-            counter <= next;
-            
-    // Next Counter Value Logic
-    assign next = (counter == (M-1)) ? 0 : counter + 1;
-    
-    // Output Logic
-    assign tick = (counter == (M-1)) ? 1'b1 : 1'b0;
-       
+            r_reg <= r_next;
+    end
+
+    // Menggunakan nilai M dari register AXI
+    assign r_next = (r_reg == (M - 1)) ? 0 : r_reg + 1;
+    assign tick   = (r_reg == (M - 1));
+
 endmodule
